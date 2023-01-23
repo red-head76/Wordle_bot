@@ -1,6 +1,5 @@
 import bot
 import unittest
-from csv import reader
 
 
 class test_bot(unittest.TestCase):
