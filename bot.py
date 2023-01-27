@@ -1,9 +1,41 @@
-from csv import reader
+import numpy as np
+from csv import reader, writer
 from itertools import product
-from math import log
 from random import choice
+from os.path import isfile
+from re import findall
 from tqdm import tqdm
 
+
+# Helper functions ############################################################
+
+def edit_word_list():
+    with open("./word-list.js", 'r') as inp:
+        data = inp.readline()
+
+    # set to avoid duplicates
+    words = set(findall(r"(?:')([A-Z]{5})(?:')", data))
+
+    with open("./word-list_edit.csv", 'w') as out:
+        writer(out).writerow(words)
+
+
+def create_pattern_table():
+    with open("./word-list_edit.csv", 'r') as inp:
+        words = reader(inp).__next__()  # csv of only one line
+
+    # ubyte = 8-bit unsigned int -> from 0 to 255, which is enough for 243 combinations
+    pattern_table = np.empty((len(words), len(words)), dtype=np.ubyte)
+
+    for i, word1 in tqdm(enumerate(words)):
+        for j, word2 in enumerate(words):
+            pattern_table[i, j] = wordle_game.combination_str_to_int(
+                wordle_game.calc_combination(word1, word2))
+
+    np.save("pattern_table", pattern_table)
+
+
+# game class ##################################################################
 
 class wordle_game(object):
     """
@@ -11,7 +43,10 @@ class wordle_game(object):
 
     class attributes:
         top_n (int, default: 5): the amount of words that should be returned
-        remaining_words (list of strings): the list of remaining words
+        first_top10 (dict (string: int)): a dictionary with the first top10 words
+        remaining_words (np.array (str)): the list of remaining words
+        pattern_table (np.array (ushort)): the pattern table for the remaining_words
+
 
     """
 
@@ -19,12 +54,23 @@ class wordle_game(object):
         # Number of entries to show
         self.top_n = top_n
         # import wordle word list and set it as remaining words
+        new_word_list = False
+        if not isfile("./word-list_edit.csv"):
+            print("Creating new word list...")
+            edit_word_list()
+            new_word_list = True
         with open("./word-list_edit.csv", 'r') as inp:
-            self.remaining_words = reader(inp).__next__()  # csv of only one line
+            self.remaining_words = np.array(reader(inp).__next__())  # csv of only one line
 
         # import top 10 for first guess
         with open("./top10.csv", 'r') as inp:
             self.first_top10 = {rows[0]: float(rows[1]) for rows in reader(inp)}
+
+        # import pattern_table
+        if not isfile("./pattern_table.npy") or new_word_list:
+            print("Creating new pattern table...")
+            create_pattern_table()
+        self.pattern_table = np.load("./pattern_table.npy")
 
     def find_best_next_words(self) -> dict:
         """
@@ -35,11 +81,11 @@ class wordle_game(object):
                         and the entropy value. Highest value is first.
 
         """
-        entropy_dict = {}
-        for word in tqdm(self.remaining_words):
-            entropy_dict[word] = self.calculate_entropy(word)
-
-        return dict(sorted(entropy_dict.items(), key=lambda x: x[1], reverse=True)[:self.top_n])
+        entropies = [self.calculate_entropy(word) for word in self.remaining_words]
+        # sort descending
+        sort_mask = np.flip(np.argsort(entropies))
+        return dict(zip(np.asarray(self.remaining_words)[sort_mask][:self.top_n],
+                        np.asarray(entropies)[sort_mask][:self.top_n]))
 
     def calculate_entropy(self, word: str) -> float:
         """
@@ -52,23 +98,12 @@ class wordle_game(object):
             entropy (float)
 
         """
-        entropy = 0
-        # For every possible feedback count the amount of remaining words
-        # N = nothing right (grey), C = character included (yellow), F = full match (green)
-        for combination in product("NCF", repeat=5):
-            # number of words in remaining_words matching pattern
-            n_words = (len(self.get_matching_words(word, combination)))
-            # if n_words = 0 -> p = 0 -> p * log(0) = 0
-            if n_words != 0:
-                # TODO: this won't yield sum_i p_i = 1, because some words appear twice
-                # S' = N * S - N log N, so this measure still works, it's just not the
-                # 'real' entropy
-                p = n_words / len(self.remaining_words)
-                entropy += - p * log(p)
+        values, counts = np.unique(self.pattern_table[self.remaining_words == word],
+                                   return_counts=True)
+        ps = (counts / self.remaining_words.size)
+        return np.sum(ps * np.log(1 / ps), axis=0)
 
-        return entropy
-
-    def get_matching_words(self, input_word: str, combination: str) -> list:
+    def get_matching_words(self, input_word: str, combination: str) -> np.array:
         """
         Returns the list of matching words depending on the input word and the feedback combination
         e.g. the input_word "HOUSE" with combination "NCNFN" means there should be an 'O' somewhere
@@ -83,65 +118,11 @@ class wordle_game(object):
             matching_words (list)
 
         """
-        matching_words = []
-        # Write gray / yellow / green letters into separate lists / dicts
-        no_matches = []         # gray letters
-        character_matches = {}  # yellow letters
-        full_matches = {}       # green letters
-
-        for i in range(5):
-            if combination[i] == "N":
-                no_matches.append(input_word[i])
-            elif combination[i] == "C":
-                character_matches[i] = input_word[i]
-            elif combination[i] == "F":
-                full_matches[i] = input_word[i]
-            else:
-                raise ValueError(f"'{combination[i]}' is no valid character in combination.")
-
-        # put individual checkers into functions for proper returning to the following word loop
-        # If conditions are matched, True is returned
-
-        def check_no_matches(word, matches):
-            # Check no matching conditions (grey letters)
-            for char in matches:
-                # For no_matches:
-                # The occurrences cannot be greater than the character or full matches
-                if (word.count(char) >
-                    list(character_matches.values()).count(char) +
-                        list(full_matches.values()).count(char)):
-                    return False
-            return True
-
-        def check_character_matches(word, matches):
-            # Check character included conditions (yellow letters)
-            for pos, char in matches.items():
-                # For character_matches:
-                # The occurrences cannot be smaller than the character or full matches
-                if (word.count(char) <
-                    list(character_matches.values()).count(char) +
-                        list(full_matches.values()).count(char)):
-                    return False
-                # Check, if its on the same position. Otherwise it would be green
-                if word[pos] == char:
-                    return False
-            return True
-
-        def check_full_matches(word, matches):
-            # Check full match conditions (green letters)
-            for pos, char in full_matches.items():
-                if not word[pos] == char:
-                    return False
-            return True
-
-        for word in self.remaining_words:
-            # ordered from fastest check to slowest
-            if check_full_matches(word, full_matches):
-                if check_character_matches(word, character_matches):
-                    if check_no_matches(word, no_matches):
-                        matching_words.append(word)
-
-        return matching_words
+        # the list of the corresponding patterns with respect to the input word
+        patterns = self.pattern_table[self.remaining_words == input_word].ravel()
+        # the indices, at which the pattern number equals
+        # nonzero returns a tuple, thats why [0]
+        return (patterns == wordle_game.combination_str_to_int(combination)).nonzero()[0]
 
     def calc_combination(input_word: str, solution: str) -> str:
         """
@@ -175,6 +156,32 @@ class wordle_game(object):
         # The rest is not matching ('N')
         return "".join(combination)
 
+    def combination_str_to_int(combination: str) -> int:
+        """
+        Convert a string representation of a combination to an integer.
+        The rule for that is the order in which the combinations appear with the 'product'-function
+
+        Args:
+            combination (string): the combination in string representation  (e.g. "NNNFC")
+
+        Returns:
+            combination_as_int (integer)
+        """
+        return list(product("NCF", repeat=5)).index(tuple(combination))
+
+    def combination_int_to_str(combination_int: int) -> str:
+        """
+        Convert a integer representation of a combination to an string.
+        The rule for that is the order in which the combinations appear with the 'product'-function
+
+        Args:
+            combination (int): the combination in string representation (from 0 to 242)
+
+        Returns:
+            combination (string)
+        """
+        return "".join(list(product("NCF", repeat=5))[combination_int])
+
     def main(self):
         """
         Play wordle with help of the bot
@@ -184,30 +191,36 @@ class wordle_game(object):
         """
         solution = choice(self.remaining_words)  # choose a random word as solution
         solved = False
-        last_input = ""
         print("New game")
         while not solved:
-            # if len(self.remaining_words) == 8241:  # if this is the first query
-            #     top_words = self.first_top10
-            # else:
             top_words = self.find_best_next_words()
             print("Top words to choose:")
             it = iter(top_words)
             for i in range(min(self.top_n, len(self.remaining_words))):
                 key = next(it)
                 print(key, f"{top_words[key]:.2f}")
-            last_input = input("Input your chosen word:").upper()
-            combination = wordle_game.calc_combination(last_input, solution)
-            # combination = input("Combination:")
+            last_input = ""
+            matching_words = np.array([])
+            last_input = input("Input your word:").upper()
+            while not matching_words.size:  # while there are no matching words (strict mode)
+                while (not len(last_input) == 5):  # while the last input is not 5 chars long
+                    last_input = input("Word needs to be 5 letters long. New word:").upper()
+                combination = wordle_game.calc_combination(last_input, solution)
+                matching_words = self.get_matching_words(last_input, combination)
+                if not matching_words.size:
+                    last_input = input("Word not in remaining word list. New word:").upper()
+
+            # reduce remaining_words and pattern table according to matching_words
+            self.remaining_words = self.remaining_words[matching_words]
+            self.pattern_table = self.pattern_table[np.ix_(matching_words, matching_words)]
             if last_input == solution:
                 # if combination == "FFFFF":
                 print("Correct!")
                 solved = True
             else:
-                self.remaining_words = self.get_matching_words(last_input, combination)
-            print(len(self.remaining_words))
-            if len(self.remaining_words) < 20:
-                print("Remaining :\n", self.remaining_words)
+                print(f"{len(self.remaining_words)} words left")
+                if len(self.remaining_words) < 20:
+                    print("Remaining :\n", self.remaining_words)
 
 
 if __name__ == '__main__':
