@@ -146,7 +146,10 @@ class wordle_game(object):
         for i in range(5):
             char = input_word[i]
             if char in solution:
-                # count occurrences of that char, that are already marked
+                # If its already a full match, don't change it
+                if input_word[i] == solution[i]:
+                    continue
+                # Count occurrences of that char, that are already marked
                 already_marked = [n for n in range(5)
                                   if (combination[n] == 'F' or combination[n] == 'C')
                                   and input_word[n] == char]
