@@ -1,3 +1,4 @@
+from wordfreq import word_frequency, zipf_frequency
 import numpy as np
 from csv import reader, writer
 from itertools import product
@@ -50,7 +51,7 @@ class wordle_game(object):
 
     """
 
-    def __init__(self, top_n=5):
+    def __init__(self, top_n=5, freq_scaling='linear'):
         # Number of entries to show
         self.top_n = top_n
         # import wordle word list and set it as remaining words
@@ -61,6 +62,15 @@ class wordle_game(object):
             new_word_list = True
         with open("./word-list_edit.csv", 'r') as inp:
             self.remaining_words = np.array(reader(inp).__next__())  # csv of only one line
+
+        if freq_scaling == 'linear':
+            self.word_freq = np.array(
+                [word_frequency(word, 'de') for word in self.remaining_words])
+        elif freq_scaling == 'log':
+            self.word_freq = np.array(
+                [zipf_frequency(word, 'de') for word in self.remaining_words])
+        else:
+            raise ValueError(f"{freq_scaling} is not a valid scaling. Choose 'linear' or 'log'")
 
         # import top 10 for first guess
         with open("./top10.csv", 'r') as inp:
@@ -81,7 +91,7 @@ class wordle_game(object):
                         and the entropy value. Highest value is first.
 
         """
-        entropies = [self.calculate_entropy(word) for word in self.remaining_words]
+        entropies = [self.calculate_entropy(word) for word in tqdm(self.remaining_words)]
         # sort descending
         sort_mask = np.flip(np.argsort(entropies))
         return dict(zip(np.asarray(self.remaining_words)[sort_mask][:self.top_n],
@@ -98,10 +108,13 @@ class wordle_game(object):
             entropy (float)
 
         """
-        values, counts = np.unique(self.pattern_table[self.remaining_words == word],
-                                   return_counts=True)
-        ps = (counts / self.remaining_words.size)
-        return np.sum(ps * np.log(1 / ps), axis=0)
+        w_counts = np.empty(243)
+        for pattern in range(243):
+            indices_according_to_pattern = np.where(
+                self.pattern_table[self.remaining_words == word].ravel() == pattern)[0]
+            w_counts[pattern] = np.sum(self.word_freq[indices_according_to_pattern])
+        w_counts = w_counts[np.nonzero(w_counts)]
+        return np.sum(w_counts * np.log(1 / w_counts), axis=0)
 
     def get_matching_words(self, input_word: str, combination: str) -> np.array:
         """
