@@ -205,6 +205,41 @@ class wordle_game(object):
         Args:
             top_n (int, default 5): the amount of suggestions the bot should print
         """
+        solved = False
+        print("New game")
+        while not solved:
+            top_words = self.find_best_next_words()
+            print("Top words to choose:")
+            it = iter(top_words)
+            for i in range(min(self.top_n, len(self.remaining_words))):
+                key = next(it)
+                print(key, f"{top_words[key]:.2f}")
+            last_input = input("Input your word:").upper()
+            while not matching_words.size:  # while there are no matching words (strict mode)
+                while (not len(last_input) == 5):  # while the last input is not 5 chars long
+                    last_input = input("Word needs to be 5 letters long. New word:").upper()
+
+            combination = input("Combination: ").upper()
+            matching_words = self.get_matching_words(last_input, combination)
+
+            # reduce remaining_words and pattern table according to matching_words
+            self.remaining_words = self.remaining_words[matching_words]
+            self.pattern_table = self.pattern_table[np.ix_(matching_words, matching_words)]
+            if combination == "FFFFF":
+                print("Correct!")
+                solved = True
+            else:
+                print(f"{len(self.remaining_words)} words left")
+                if len(self.remaining_words) < 20:
+                    print("Remaining :\n", self.remaining_words)
+
+        def main_random_word(self):
+        """
+        Play wordle with a random chosen word with help of the bot
+
+        Args:
+            top_n (int, default 5): the amount of suggestions the bot should print
+        """
         solution = choice(self.remaining_words)  # choose a random word as solution
         solved = False
         print("New game")
@@ -230,7 +265,6 @@ class wordle_game(object):
             self.remaining_words = self.remaining_words[matching_words]
             self.pattern_table = self.pattern_table[np.ix_(matching_words, matching_words)]
             if last_input == solution:
-                # if combination == "FFFFF":
                 print("Correct!")
                 solved = True
             else:
