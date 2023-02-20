@@ -1,0 +1,11 @@
+true_words = [
+    "LISTE",
+    "SPECK",
+    "TANGO",
+    "FUCHS",
+    "SICHT",
+    "ATOLL",
+    "KIPPE",
+    "LESEN",
+    "WINDE",
+    "APFEL"]
