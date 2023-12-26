@@ -44,7 +44,7 @@ class wordle_game(object):
 
     class attributes:
         top_n (int, default: 5): the amount of words that should be returned
-        first_top10 (dict (string: int)): a dictionary with the first top10 words
+        first_top5 (dict (string: int)): a dictionary with the first top5 words
         remaining_words (np.array (str)): the list of remaining words
         pattern_table (np.array (ushort)): the pattern table for the remaining_words
 
@@ -73,8 +73,8 @@ class wordle_game(object):
             raise ValueError(f"{freq_scaling} is not a valid scaling. Choose 'linear' or 'log'")
 
         # import top 10 for first guess
-        with open("./top10.csv", 'r') as inp:
-            self.first_top10 = {rows[0]: float(rows[1]) for rows in reader(inp)}
+        with open("./top5.csv", 'r') as inp:
+            self.first_top5 = {rows[0]: float(rows[1]) for rows in reader(inp)}
 
         # import pattern_table
         if not isfile("./pattern_table.npy") or new_word_list:
@@ -208,14 +208,18 @@ class wordle_game(object):
         solved = False
         print("New game")
         while not solved:
-            top_words = self.find_best_next_words()
+            if len(self.remaining_words) == self.pattern_table.shape[0]:
+                top_words = self.first_top5
+            else:
+                top_words = self.find_best_next_words()
             print("Top words to choose:")
             it = iter(top_words)
             for i in range(min(self.top_n, len(self.remaining_words))):
                 key = next(it)
                 print(key, f"{top_words[key]:.2f}")
             last_input = input("Input your word:").upper()
-            while not matching_words.size:  # while there are no matching words (strict mode)
+            # while there are no matching words (strict mode)
+            while not last_input in self.remaining_words:
                 while (not len(last_input) == 5):  # while the last input is not 5 chars long
                     last_input = input("Word needs to be 5 letters long. New word:").upper()
 
@@ -233,7 +237,7 @@ class wordle_game(object):
                 if len(self.remaining_words) < 20:
                     print("Remaining :\n", self.remaining_words)
 
-        def main_random_word(self):
+    def main_random_word(self):
         """
         Play wordle with a random chosen word with help of the bot
 
@@ -244,7 +248,10 @@ class wordle_game(object):
         solved = False
         print("New game")
         while not solved:
-            top_words = self.find_best_next_words()
+            if len(self.remaining_words == self.pattern_table[0]):
+                top_words = np.loadtxt("./top5.csv", delimiter=',')
+            else:
+                top_words = self.find_best_next_words()
             print("Top words to choose:")
             it = iter(top_words)
             for i in range(min(self.top_n, len(self.remaining_words))):
